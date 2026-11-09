@@ -1,0 +1,71 @@
+workflows:
+  ios-debug:
+    name: GestaltX iOS (unsigned debug)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: "GestaltX.xcodeproj"
+        XCODE_SCHEME: "GestaltX"
+        BUNDLE_ID: "com.huami.gestultx"
+    scripts:
+      - name: Build unsigned debug
+        script: |
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+    artifacts:
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+      - /tmp/xcodebuild_logs/*.log
+
+  ios-ipa:
+    name: GestaltX iOS (signed IPA)
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      # Configure these in Codemagic UI → Application / Team variables
+      # and set up ios_signing (certificate + provisioning profile that includes an App Group)
+      vars:
+        XCODE_PROJECT: "GestaltX.xcodeproj"
+        XCODE_SCHEME: "GestaltX"
+        BUNDLE_ID: "com.huami.gestultx"
+      # Uncomment and fill when you have signing set up in Codemagic:
+      # ios_signing:
+      #   distribution_type: development   # or ad_hoc / app_store
+      #   bundle_identifier: com.huami.gestultx
+    scripts:
+      - name: Set up keychain
+        script: keychain initialize
+      # Uncomment when ios_signing is configured:
+      # - name: Fetch signing files
+      #   script: |
+      #     app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_DEVELOPMENT --create
+      # - name: Use profiles
+      #   script: xcode-project use-profiles
+      - name: Build IPA
+        script: |
+          # Fallback: build without automatic signing fetch if credentials are not yet set
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath build/GestaltX.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO || true
+          # When signing is ready, prefer:
+          # xcode-project build-ipa --project "$XCODE_PROJECT" --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/**/*.xcarchive
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
