@@ -1,5 +1,5 @@
 workflows:
-  # Simulator .app only — not an IPA. Useful for compile checks.
+  # Simulator .app only
   ios-debug:
     name: GestaltX iOS (simulator debug)
     max_build_duration: 60
@@ -9,7 +9,6 @@ workflows:
       vars:
         XCODE_PROJECT: "GestaltX.xcodeproj"
         XCODE_SCHEME: "GestaltX"
-        BUNDLE_ID: "com.huami.gestultx"
     scripts:
       - name: Build simulator app
         script: |
@@ -27,19 +26,66 @@ workflows:
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
       - /tmp/xcodebuild_logs/*.log
 
-  # Real device IPA — requires code signing in Codemagic UI.
-  ios-ipa:
-    name: GestaltX iOS (signed IPA)
+  # Unsigned IPA for sideload tools (TrollStore etc.) — no Apple cert needed
+  ios-unsigned-ipa:
+    name: GestaltX unsigned IPA
     max_build_duration: 90
     instance_type: mac_mini_m2
     environment:
       xcode: latest
-      # REQUIRED in Codemagic UI:
-      # 1. Team / Application → Code signing identities → upload certificate + profile
-      # 2. Profile must include App Group for MobileGestalt access
-      # 3. Match distribution_type below to your profile type
+      vars:
+        XCODE_PROJECT: "GestaltX.xcodeproj"
+        XCODE_SCHEME: "GestaltX"
+        APP_NAME: "GestaltX"
+    scripts:
+      - name: Build device app (no signing)
+        script: |
+          set -euo pipefail
+          mkdir -p build/unsigned
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+          APP_PATH=$(find build/DerivedData/Build/Products -name "${APP_NAME}.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: ${APP_NAME}.app not found"
+            find build/DerivedData -name "*.app" -type d || true
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+
+          # Package as IPA (Payload + zip)
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          cd build
+          rm -f "${APP_NAME}-unsigned.ipa"
+          zip -r "${APP_NAME}-unsigned.ipa" Payload
+          ls -lh "${APP_NAME}-unsigned.ipa"
+          mkdir -p ios/ipa
+          cp "${APP_NAME}-unsigned.ipa" ios/ipa/
+    artifacts:
+      - build/*-unsigned.ipa
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+  # Signed IPA — needs cert + profile in Codemagic UI
+  ios-ipa:
+    name: GestaltX signed IPA
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
       ios_signing:
-        distribution_type: ad_hoc   # or: development | app_store | enterprise
+        distribution_type: ad_hoc
         bundle_identifier: com.huami.gestultx
       vars:
         XCODE_PROJECT: "GestaltX.xcodeproj"
@@ -50,9 +96,6 @@ workflows:
         script: keychain initialize
       - name: Fetch signing files
         script: |
-          # ad_hoc → IOS_APP_ADHOC
-          # development → IOS_APP_DEVELOPMENT
-          # app_store → IOS_APP_STORE
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_ADHOC \
             --create
@@ -68,4 +111,3 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
